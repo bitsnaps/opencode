@@ -213,6 +213,7 @@ jobs:
           - { target: linux-arm64, host: blacksmith-4vcpu-ubuntu-2404-arm }
           - { target: linux-x64, host: blacksmith-4vcpu-ubuntu-2404 }
           - { target: darwin-arm64, host: blacksmith-6vcpu-macos-26 }
+          - { target: darwin-x64, host: macos-26-intel }
           - { target: windows-arm64, host: blacksmith-4vcpu-windows-2025 }
           - { target: windows-x64, host: blacksmith-4vcpu-windows-2025 }
     runs-on: ${{ matrix.host }}
@@ -224,7 +225,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "26.4.0"
+          node-version: "22.18.0"
       - *download-models-catalog
       - name: Build
         working-directory: packages/cli
@@ -232,6 +233,33 @@ jobs:
         env:
           OPENCODE_TARGET: ${{ matrix.target }}
           OPENCODE_MODELS_SNAPSHOT: ${{ github.workspace }}/.cache/models-catalog/api.json
+      - name: Verify macOS deployment target
+        if: startsWith(matrix.target, 'darwin')
+        working-directory: packages/cli
+        run: |
+          binary="dist/node/cli-node-$OPENCODE_TARGET/bin/opencode2-node"
+          minimum=$(vtool -show-build "$binary" | awk '$1 == "minos" { print $2 }')
+          test "$minimum" = "11.0"
+        env:
+          OPENCODE_TARGET: ${{ matrix.target }}
+      - name: Verify macOS native asset deployment targets
+        if: startsWith(matrix.target, 'darwin')
+        working-directory: packages/cli
+        run: |
+          while IFS= read -r -d '' asset; do
+            file -b "$asset" | grep -q 'Mach-O' || continue
+            minimums=$(vtool -show-build "$asset" | awk '$1 == "minos" { print $2 }')
+            if [ -z "$minimums" ]; then
+              minimums=$(otool -l "$asset" | awk '$1 == "cmd" { macos = $2 == "LC_VERSION_MIN_MACOSX" } macos && $1 == "version" { print $2; macos = 0 }')
+            fi
+            test -n "$minimums" || { echo "No macOS deployment target found: $asset"; exit 1; }
+            while IFS= read -r minimum; do
+              awk -v minimum="$minimum" 'BEGIN { split(minimum, version, "."); exit !(version[1] < 11 || (version[1] == 11 && version[2] == 0)) }' || {
+                echo "macOS deployment target exceeds 11.0: $asset ($minimum)"
+                exit 1
+              }
+            done <<< "$minimums"
+          done < <(find dist-node/assets -type f -print0)
       - name: Test
         if: matrix.target != 'windows-arm64'
         working-directory: packages/cli
@@ -248,6 +276,23 @@ jobs:
         with:
           name: build-node-${{ matrix.target }}
           path: packages/cli/dist/node
+
+  test-node-ubuntu-2004:
+    needs: [plan, build-node]
+    if: needs.plan.outputs.node == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+        - name: Download Linux x64 Node CLI
+          uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+          with:
+            name: build-node-linux-x64
+            path: node-cli
+        - name: Test on Ubuntu 20.04
+          run: |
+            chmod +x node-cli/cli-node-linux-x64/bin/opencode2-node
+            docker run --rm \
+              -v "$GITHUB_WORKSPACE/node-cli/cli-node-linux-x64/bin:/opencode:ro" \
+              ubuntu:20.04 /opencode/opencode2-node --help
 
   # `bun run pack` packs every npm package into dist/npm and the Linux and Node CLI archives into dist/archives.
   # The macOS and Windows CLI packages and archives are re-packed after signing.

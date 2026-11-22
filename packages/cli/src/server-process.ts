@@ -144,9 +144,11 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
           fs: {
             filewatcher: !truthy(process.env.OPENCODE_FILEWATCHER_DISABLE ?? process.env.OPENCODE_DISABLE_FILEWATCHER),
             fff:
-              process.env.OPENCODE_DISABLE_FFF === undefined
-                ? process.platform !== "win32"
-                : !truthy(process.env.OPENCODE_DISABLE_FFF),
+              OPENCODE_ARTIFACT === "cli-node"
+                ? false
+                : process.env.OPENCODE_DISABLE_FFF === undefined
+                  ? process.platform !== "win32"
+                  : !truthy(process.env.OPENCODE_DISABLE_FFF),
           },
         },
         serviceOptions === undefined

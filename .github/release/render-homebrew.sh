@@ -16,16 +16,27 @@ class OpencodeV2 < Formula
   version "$OPENCODE_VERSION"
   license "MIT"
 
+  depends_on macos: ">= :big_sur"
   depends_on "ripgrep"
   conflicts_with "opencode", because: "both install an opencode binary"
 
   on_macos do
-    if Hardware::CPU.arm?
-      url "$base/opencode-darwin-arm64.zip"
-      sha256 "$(sum "$macos/opencode-darwin-arm64.zip")"
+    if MacOS.version < :ventura
+      if Hardware::CPU.arm?
+        url "$base/opencode2-node-darwin-arm64.zip"
+        sha256 "$(sum "$macos/opencode2-node-darwin-arm64.zip")"
+      else
+        url "$base/opencode2-node-darwin-x64.zip"
+        sha256 "$(sum "$macos/opencode2-node-darwin-x64.zip")"
+      end
     else
-      url "$base/opencode-darwin-x64-baseline.zip"
-      sha256 "$(sum "$macos/opencode-darwin-x64-baseline.zip")"
+      if Hardware::CPU.arm?
+        url "$base/opencode-darwin-arm64.zip"
+        sha256 "$(sum "$macos/opencode-darwin-arm64.zip")"
+      else
+        url "$base/opencode-darwin-x64-baseline.zip"
+        sha256 "$(sum "$macos/opencode-darwin-x64-baseline.zip")"
+      end
     end
   end
 
@@ -40,7 +51,11 @@ class OpencodeV2 < Formula
   end
 
   def install
-    bin.install "opencode"
+    if File.exist?("opencode2-node")
+      bin.install "opencode2-node" => "opencode"
+    else
+      bin.install "opencode"
+    end
   end
 end
 FORMULA

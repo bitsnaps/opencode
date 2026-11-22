@@ -23,6 +23,9 @@ await packDistribution({
   binary: "opencode",
   packagePrefix: "@opencode/cli-",
   archive: (target) => target.startsWith("linux-"),
+  additional: existsSync(path.join(root, "node"))
+    ? { root: path.join(root, "node"), packagePrefix: "@opencode/cli-node-" }
+    : undefined,
 })
 if (existsSync(path.join(root, "node"))) {
   await packDistribution({
@@ -43,12 +46,22 @@ async function packDistribution(input: {
   binary: string
   packagePrefix: string
   archive: (target: string) => boolean
+  additional?: { root: string; packagePrefix: string }
 }) {
   const binaries: Record<string, string> = {}
+  const additionalBinaries = new Set<string>()
   for (const filepath of new Bun.Glob("*/package.json").scanSync({ cwd: input.root })) {
     const item = await Bun.file(`${input.root}/${filepath}`).json()
     if (!item.name.startsWith(input.packagePrefix)) continue
     binaries[item.name] = item.version
+  }
+  if (input.additional) {
+    for (const filepath of new Bun.Glob("*/package.json").scanSync({ cwd: input.additional.root })) {
+      const item = await Bun.file(`${input.additional.root}/${filepath}`).json()
+      if (!item.name.startsWith(input.additional.packagePrefix)) continue
+      binaries[item.name] = item.version
+      additionalBinaries.add(item.name)
+    }
   }
   console.log(input.name, "binaries", binaries)
   const versions = new Set(Object.values(binaries))
@@ -59,6 +72,7 @@ async function packDistribution(input: {
 
   await $`mkdir -p ${input.root}/${input.name}/bin`
   await $`cp ./script/postinstall.mjs ${input.root}/${input.name}/postinstall.mjs`
+  await $`cp ./script/legacy-os.mjs ${input.root}/${input.name}/legacy-os.mjs`
   await Bun.file(`${input.root}/${input.name}/bin/${input.command}.exe`).write(
     [
       `echo "Error: ${input.name}'s postinstall script was not run." >&2`,
@@ -91,10 +105,15 @@ async function packDistribution(input: {
     ),
   )
 
-  await Promise.all(Object.keys(binaries).map((name) => pack(`${input.root}/${name.replace("@opencode/", "")}`)))
+  await Promise.all(
+    Object.keys(binaries)
+      .filter((name) => !additionalBinaries.has(name))
+      .map((name) => pack(`${input.root}/${name.replace("@opencode/", "")}`)),
+  )
   await pack(`${input.root}/${input.name}`)
   await Promise.all(
     Object.keys(binaries)
+      .filter((name) => !additionalBinaries.has(name))
       .map((name) => name.slice(input.packagePrefix.length))
       .filter(input.archive)
       .map((target) =>

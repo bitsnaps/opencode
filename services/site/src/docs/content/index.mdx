@@ -28,7 +28,13 @@ The npm package uses a postinstall script to select the native `opencode` binary
 explicitly allow the required script; Vite+ requires no additional flag. The mise command requires mise 2026.10.9 or later;
 older versions install OpenCode 1.
 
-Windows package managers are not supported.
+On macOS 11 and 12, npm, the install script and the Homebrew formula select the Node.js 22.18.0 CLI. On Ubuntu 20.04 and
+Windows 10, npm and the install script select the same CLI. These legacy routes support headless commands such as
+`opencode run` and `opencode serve`. The full-screen TUI and `opencode mini` are unavailable on these OS versions.
+Because `opencode run` is non-interactive, it cancels questions and rejects permissions unless `--auto` is supplied.
+The Node CLI disables FFF and uses the ripgrep search fallback.
+
+On Windows, use npm or the install script.
 
 
 Download a standalone CLI binary for your platform.

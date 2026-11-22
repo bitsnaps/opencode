@@ -59,7 +59,7 @@ fi
 
 # What each channel builds and publishes.
 case "$channel" in
-  latest) npm_tag=latest cli=true desktop=true node=false release=true ;;
+  latest) npm_tag=latest cli=true desktop=true node=true release=true ;;
   dev) npm_tag=dev cli=true desktop=true node=true release=false ;;
   beta) npm_tag="" cli=false desktop=true node=false release=false ;;
   pr) npm_tag=pr cli=true desktop=true node=true release=true ;;

@@ -1,13 +1,11 @@
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Global } from "@opencode/util/global"
-import { run } from "@opencode/tui"
 import { Commands } from "../commands"
 import { Runtime } from "../../framework/runtime"
 import { Config } from "../../config"
 import { Context, Effect, FileSystem, Option, Queue, Schedule, Semaphore } from "effect"
 import { ServerConnection } from "../../services/server-connection"
 import { Updater } from "../../services/updater"
-import { UpdatePreflight } from "../../services/update-preflight"
 import { Npm } from "@opencode/util/npm"
 import { OPENCODE_ARTIFACT, OPENCODE_CHANNEL, OPENCODE_HIGHLIGHTS, OPENCODE_VERSION } from "../../version"
 import { Env } from "../../env"
@@ -15,9 +13,14 @@ import { Service } from "@opencode/client/effect/service"
 import { OpenCode } from "@opencode/client/promise"
 import { findSession } from "../../session-target"
 import { errorMessage } from "../../util/error"
+import { tuiUnavailable } from "../../node/compat"
 
-export default Runtime.handler(Commands, (input) =>
-  Effect.gen(function* () {
+export default Runtime.handler(Commands, (input) => {
+  if (OPENCODE_ARTIFACT === "cli-node") return Effect.fail(new Error(tuiUnavailable()))
+  return Effect.gen(function* () {
+    const [{ run }, { UpdatePreflight }] = yield* Effect.promise(() =>
+      Promise.all([import("@opencode/tui"), import("../../services/update-preflight")]),
+    )
     const requestedDirectory = Option.getOrUndefined(input.directory)
     const requestedServer = Option.getOrUndefined(input.server)
     if (requestedDirectory !== undefined) process.chdir(requestedDirectory)
@@ -156,5 +159,5 @@ export default Runtime.handler(Commands, (input) =>
         runFork(effect)
       },
     }).pipe(Effect.provide(LayerNode.compile(Global.node)))
-  }),
-)
+  })
+})

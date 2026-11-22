@@ -11,3 +11,9 @@ for target in windows-arm64 windows-x64 windows-x64-baseline; do
   tar -czf "$out/opencode-cli-$target-$OPENCODE_VERSION.tgz" -C "$work/cli/$target" package
   powershell -NoProfile -Command "Compress-Archive -Path '$(cygpath -w "$work/cli/$target/package/bin/opencode.exe")' -DestinationPath '$(cygpath -w "$out/opencode-$target.zip")'"
 done
+if [ -d "$work/cli-node" ]; then
+  for target in windows-arm64 windows-x64; do
+    tar -czf "$out/opencode-cli-node-$target-$OPENCODE_VERSION.tgz" -C "$work/cli-node/$target" package
+    powershell -NoProfile -Command "Compress-Archive -Path '$(cygpath -w "$work/cli-node/$target/package/bin/opencode2-node.exe")' -DestinationPath '$(cygpath -w "$out/opencode2-node-$target.zip")'"
+  done
+fi

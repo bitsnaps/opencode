@@ -5,6 +5,7 @@ import { createHash } from "node:crypto"
 import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { build } from "vite"
 import { Script } from "@opencode/script"
 import { embed } from "@opencode/script/highlights"
@@ -17,7 +18,7 @@ import { verifyArtifact } from "./verify-artifact"
 import { NativeArch } from "../../../script/native-arch"
 import { bundledModelsSnapshot } from "../../core/script/models-snapshot"
 
-const NODE_VERSION = "26.4.0"
+const NODE_VERSION = "22.18.0"
 const dir = path.resolve(import.meta.dirname, "..")
 const outdir = path.resolve(
   dir,
@@ -39,6 +40,7 @@ const allTargets = [
   nodeTarget("linux", "arm64"),
   nodeTarget("linux", "x64"),
   nodeTarget("darwin", "arm64"),
+  nodeTarget("darwin", "x64"),
   nodeTarget("win32", "arm64"),
   nodeTarget("win32", "x64"),
 ]
@@ -56,13 +58,7 @@ if (appArchiveOnly) {
   await writeFile(archivePath, await buildAppArchive(Script.channel, Script.version))
   process.exit(0)
 }
-if (targets.length === 0) {
-  if (requested === "darwin-x64") throw new Error("Node 26.4 SEA does not support macOS x64")
-  throw new Error(`Unknown Node target: ${requested}`)
-}
-if (!bundleOnly && targets.some((target) => target.platform === "darwin" && target.arch === "x64")) {
-  throw new Error("Node 26.4 SEA does not support macOS x64")
-}
+if (targets.length === 0) throw new Error(`Unknown Node target: ${requested}`)
 const modelsSnapshot = await bundledModelsSnapshot()
 const appArchive = archivePath ? await Bun.file(archivePath).bytes() : await buildAppArchive(Script.channel, Script.version)
 if (!bundleOnly) await rm(outdir, { recursive: true, force: true })
@@ -101,6 +97,7 @@ for (const target of targets) {
     highlights,
     modelsSnapshot,
     assetHash,
+    assetKeys: assets.map((asset) => asset.key),
     target,
   }
   await copyNodeAssets(assets)
@@ -122,20 +119,29 @@ for (const target of targets) {
   const output = path.join(outdir, name, "bin", binary)
   if (!builder) throw new Error("Node SEA builder is unavailable")
   await mkdir(path.dirname(output), { recursive: true })
+  await copyFile("dist-node/opencode.mjs", "dist-node/assets/opencode.mjs")
+  await writeFile("dist-node/main.cjs", seaBootstrap(target))
   const config = {
-    main: "dist-node/opencode.mjs",
-    mainFormat: "module",
-    executable: await resolveTargetNode(target, builder),
-    output: path.relative(dir, output),
+    main: "dist-node/main.cjs",
+    output: "dist-node/sea-prep.blob",
     disableExperimentalSEAWarning: true,
     useSnapshot: false,
     useCodeCache: false,
-    execArgv: nodeExecArgv,
-    execArgvExtension: "none",
     assets: await seaAssetMap(),
   }
   await writeFile("dist-node/sea.json", `${JSON.stringify(config, null, 2)}\n`)
-  run(builder, ["--build-sea", "dist-node/sea.json"])
+  run(builder, ["--experimental-sea-config", "dist-node/sea.json"])
+  await copyFile(await resolveTargetNode(target, builder), output)
+  if (target.platform === "darwin") run("codesign", ["--remove-signature", output])
+  run(builder, [
+    fileURLToPath(import.meta.resolve("postject/dist/cli.js")),
+    output,
+    "NODE_SEA_BLOB",
+    "dist-node/sea-prep.blob",
+    "--sentinel-fuse",
+    "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2",
+    ...(target.platform === "darwin" ? ["--macho-segment-name", "NODE_SEA"] : []),
+  ])
   if (target.platform !== "win32") await chmod(output, 0o755)
   await NativeArch.verify(output, target.arch)
   if (target.platform === "darwin" && process.platform === "darwin") run("codesign", ["--sign", "-", output])
@@ -240,6 +246,82 @@ async function smoke(output: string) {
 
 function targetName(target: NodeTarget) {
   return `${target.platform === "win32" ? "windows" : target.platform}-${target.arch}`
+}
+
+function seaBootstrap(target: NodeTarget) {
+  return `const { createHash, randomUUID } = require("node:crypto")
+const { spawnSync } = require("node:child_process")
+const fs = require("node:fs")
+const os = require("node:os")
+const path = require("node:path")
+const { getAsset, isSea } = require("node:sea")
+const { pathToFileURL } = require("node:url")
+
+if (!process.env.OPENCODE_NODE_SYSTEM_CA_REEXEC) {
+  const env = {
+    ...process.env,
+    OPENCODE_NODE_SYSTEM_CA_REEXEC: "1",
+    NODE_OPTIONS: [process.env.NODE_OPTIONS, "--use-system-ca"].filter(Boolean).join(" "),
+  }
+  const result = spawnSync(process.execPath, process.argv.slice(2), { env, stdio: "inherit" })
+  if (result.error) throw result.error
+  process.exitCode = result.status ?? (result.signal ? 128 + os.constants.signals[result.signal] : 1)
+} else {
+  start()
+}
+
+function start() {
+  if (!isSea()) {
+    import(pathToFileURL(path.join(__dirname, "opencode.mjs")).href)
+    return
+  }
+
+  const uid = typeof process.getuid === "function" ? process.getuid() : undefined
+  const root = path.join(os.tmpdir(), \`opencode-node-\${uid ?? "user"}\`)
+  try {
+    fs.mkdirSync(root, { mode: 0o700 })
+  } catch (error) {
+    if (!fs.existsSync(root)) throw error
+  }
+  const rootInfo = fs.lstatSync(root)
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error("Unsafe Node asset cache path")
+  if (uid !== undefined && rootInfo.uid !== uid) throw new Error("Node asset cache is owned by another user")
+  if (uid !== undefined) fs.chmodSync(root, 0o700)
+
+  const app = Buffer.from(getAsset("opencode.mjs"))
+  const hash = createHash("sha256").update(app).digest("hex").slice(0, 16)
+  const assets = path.join(root, \`\${hash}-${target.platform}-${target.arch}\`)
+  try {
+    fs.mkdirSync(assets, { mode: 0o700 })
+  } catch (error) {
+    if (!fs.existsSync(assets)) throw error
+  }
+  const assetsInfo = fs.lstatSync(assets)
+  if (!assetsInfo.isDirectory() || assetsInfo.isSymbolicLink()) throw new Error("Unsafe Node asset directory")
+  if (uid !== undefined && assetsInfo.uid !== uid) throw new Error("Node asset directory is owned by another user")
+
+  const entry = path.join(assets, "opencode.mjs")
+  if (fs.existsSync(entry)) {
+    const entryInfo = fs.lstatSync(entry)
+    if (!entryInfo.isFile() || entryInfo.isSymbolicLink()) throw new Error("Unsafe Node application bundle")
+    if (createHash("sha256").update(fs.readFileSync(entry)).digest("hex").slice(0, 16) !== hash)
+      fs.unlinkSync(entry)
+  }
+  if (!fs.existsSync(entry)) {
+    const temporary = \`\${entry}.\${process.pid}.\${randomUUID()}.tmp\`
+    fs.writeFileSync(temporary, app, { mode: 0o600, flag: "wx" })
+    try {
+      fs.renameSync(temporary, entry)
+    } catch (error) {
+      fs.rmSync(temporary, { force: true })
+      if (!fs.existsSync(entry)) throw error
+    }
+  }
+
+  process.env.OPENCODE_NODE_ASSETS_DIR = assets
+  import(pathToFileURL(entry).href)
+}
+`
 }
 
 function run(command: string, args: readonly string[], cwd = dir) {

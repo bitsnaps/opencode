@@ -3,12 +3,16 @@ import { Commands } from "../commands"
 import { Runtime } from "../../framework/runtime"
 import { ServerConnection } from "../../services/server-connection"
 import { Config } from "../../config"
-import { resolve } from "@opencode/tui/config"
 import { Global } from "@opencode/util/global"
+import { OPENCODE_ARTIFACT } from "../../version"
+import { tuiUnavailable } from "../../node/compat"
 
-export default Runtime.handler(Commands.commands.mini, (input) =>
-  Effect.gen(function* () {
-    const { runMini, validateMiniTerminal } = yield* Effect.promise(() => import("../../mini"))
+export default Runtime.handler(Commands.commands.mini, (input) => {
+  if (OPENCODE_ARTIFACT === "cli-node") return Effect.fail(new Error(tuiUnavailable()))
+  return Effect.gen(function* () {
+    const [{ runMini, validateMiniTerminal }, { resolve }] = yield* Effect.promise(() =>
+      Promise.all([import("../../mini"), import("@opencode/tui/config")]),
+    )
     yield* Effect.promise(async () => validateMiniTerminal())
     const server = yield* ServerConnection.resolve({
       mismatch: "replace",
@@ -41,5 +45,5 @@ export default Runtime.handler(Commands.commands.mini, (input) =>
         paths: { home: global.home, state: global.state, log: global.log },
       }),
     )
-  }),
-)
+  })
+})

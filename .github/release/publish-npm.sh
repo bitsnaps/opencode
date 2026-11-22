@@ -10,9 +10,9 @@ targets="linux-arm64 linux-x64 linux-x64-baseline linux-arm64-musl linux-x64-mus
 expected="@opencode/cli"
 for target in $targets; do expected="$expected @opencode/cli-$target"; done
 for lib in schema codemode theme ai util protocol client plugin plugin-browser core simulation server sdk ui; do expected="$expected @opencode/$lib"; done
-if [ "$OPENCODE_CHANNEL" != latest ]; then
+if [ "$OPENCODE_CHANNEL" != beta ]; then
   expected="$expected @opencode/cli-node"
-  for target in linux-arm64 linux-x64 darwin-arm64 windows-arm64 windows-x64; do expected="$expected @opencode/cli-node-$target"; done
+  for target in linux-arm64 linux-x64 darwin-arm64 darwin-x64 windows-arm64 windows-x64; do expected="$expected @opencode/cli-node-$target"; done
 fi
 
 if ! dry_run; then
@@ -35,7 +35,8 @@ for file in "${files[@]}"; do
   # The signed copy of a macOS or Windows CLI package replaces the unsigned one from the build.
   if cut -f1 "$list" | grep -qxF -- "$name"; then continue; fi
   case "$name:$file" in
-    @opencode/cli-darwin-*:"$npm_dir"/* | @opencode/cli-windows-*:"$npm_dir"/*) die "$name is not signed" ;;
+    @opencode/cli-darwin-*:"$npm_dir"/* | @opencode/cli-windows-*:"$npm_dir"/* | \
+      @opencode/cli-node-darwin-*:"$npm_dir"/* | @opencode/cli-node-windows-*:"$npm_dir"/*) die "$name is not signed" ;;
   esac
   [ "$version" = "$OPENCODE_VERSION" ] || die "$name has version $version, expected $OPENCODE_VERSION"
   [ "$config" = false ] || die "$name sets publishConfig beyond access"

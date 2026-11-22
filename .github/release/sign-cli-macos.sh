@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# sign-cli-macos.sh <build-npm dir> <out dir>: signs the three macOS CLI binaries inside their npm tarballs with
-# the Developer ID in build.keychain, then writes the re-packed tarballs and the opencode-<target>.zip archives.
+# sign-cli-macos.sh <build-npm dir> <out dir>: signs the macOS CLI binaries inside their npm tarballs with the
+# Developer ID in build.keychain, then writes the re-packed tarballs and archives.
 # Dry runs sign ad-hoc.
 . "$(dirname "$0")/lib.sh"
 
@@ -25,4 +25,17 @@ for target in darwin-arm64 darwin-x64 darwin-x64-baseline; do
   tar --no-mac-metadata -czf "$out/opencode-cli-$target-$OPENCODE_VERSION.tgz" -C "$work" package
   touch -t 198001010000 "$bin"
   (cd "$work/package/bin" && zip -X -q "$out/opencode-$target.zip" opencode)
+done
+
+for target in darwin-arm64 darwin-x64; do
+  work=$(mktemp -d)
+  tar -xzf "$in/opencode-cli-node-$target-$OPENCODE_VERSION.tgz" -C "$work"
+  bin="$work/package/bin/opencode2-node"
+  file -b "$bin" | grep -q '^Mach-O' || die "Node CLI $target is not a Mach-O binary"
+  chmod 755 "$bin"
+  codesign --force "$timestamp" --options runtime --entitlements "$release_dir/entitlements/cli.plist" --sign "$identity" "$bin"
+  codesign --verify --strict --verbose=2 "$bin"
+  tar --no-mac-metadata -czf "$out/opencode-cli-node-$target-$OPENCODE_VERSION.tgz" -C "$work" package
+  touch -t 198001010000 "$bin"
+  (cd "$work/package/bin" && zip -X -q "$out/opencode2-node-$target.zip" opencode2-node)
 done

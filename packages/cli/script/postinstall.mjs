@@ -6,28 +6,32 @@ import os from "node:os"
 import path from "node:path"
 import { createRequire } from "node:module"
 import { fileURLToPath } from "node:url"
+import { usesNodeCliOnLegacyWindows, usesNodeCliOnLinux } from "./legacy-os.mjs"
 
 const directory = path.dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
 const packageJson = JSON.parse(fs.readFileSync(path.join(directory, "package.json"), "utf8"))
 const command = Object.keys(packageJson.bin ?? {})[0]
 if (!command) throw new Error("OpenCode package does not declare a binary")
-const sourceCommand = packageJson.opencodeSourceBinary ?? command
 
 const platform = { darwin: "darwin", linux: "linux", win32: "windows" }[os.platform()] ?? os.platform()
 const nodeArch = { x64: "x64", arm64: "arm64", arm: "arm" }[os.arch()] ?? os.arch()
+const legacyOS = usesNodeCliOnLegacyOS()
+const nodeCLI = packageJson.name.endsWith("/cli-node") || legacyOS
 // x64 Node runs emulated on Windows ARM64, but PROCESSOR_IDENTIFIER still names the host CPU.
 const arch =
   platform === "windows" && nodeArch === "x64" && process.env.PROCESSOR_IDENTIFIER?.startsWith("ARM")
     ? "arm64"
     : nodeArch
+const sourceCommand = nodeCLI ? "opencode2-node" : (packageJson.opencodeSourceBinary ?? command)
 // Windows cannot spawn npm's .cmd shim directly, so reuse the npm CLI that runs this script.
 const npm = process.env.npm_execpath?.endsWith("npm-cli.js") ? [process.execPath, process.env.npm_execpath] : ["npm"]
-const sourceBinary = platform === "windows" ? `${sourceCommand}.exe` : sourceCommand
 const targetBinary = path.resolve(directory, packageJson.bin[command])
 const dependencies = packageJson.optionalDependencies ?? {}
-const base = Object.keys(dependencies).find((name) => name.endsWith(`-${platform}-${arch}`))
+const binaryPackage = `@opencode/${nodeCLI ? "cli-node" : "cli"}-${platform}-${arch}`
+const base = Object.keys(dependencies).find((name) => name === binaryPackage)
 if (!base) throw new Error(`OpenCode does not provide a binary for ${platform}-${arch}`)
+const sourceBinary = platform === "windows" ? `${sourceCommand}.exe` : sourceCommand
 
 function supportsAvx2() {
   if (arch !== "x64") return false
@@ -80,6 +84,27 @@ function isMusl() {
   } catch {
     return false
   }
+}
+
+function usesNodeCliOnMac() {
+  if (platform !== "darwin") return false
+  const result = childProcess.spawnSync("sw_vers", ["-productVersion"], { encoding: "utf8" })
+  if (result.error) throw result.error
+  if (result.status !== 0) throw new Error(`Failed to detect macOS version: ${result.stderr}`)
+  const major = Number(result.stdout.trim().split(".")[0])
+  if (!Number.isInteger(major) || major < 11)
+    throw new Error(`OpenCode requires macOS 11 or later; detected ${result.stdout.trim()}`)
+  return major < 13
+}
+
+function usesNodeCliOnLegacyOS() {
+  if (platform === "darwin") return usesNodeCliOnMac()
+  if (platform === "linux") {
+    if (!fs.existsSync("/etc/os-release")) return false
+    return usesNodeCliOnLinux(fs.readFileSync("/etc/os-release", "utf8"), isMusl())
+  }
+  if (platform === "windows") return usesNodeCliOnLegacyWindows(os.release())
+  return false
 }
 
 function packageNames() {

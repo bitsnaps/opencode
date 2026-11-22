@@ -163,7 +163,7 @@ import __cjs_mod__ from "node:module"
 import { chmodSync as __ocChmod, existsSync as __ocExists, lstatSync as __ocLstat, mkdirSync as __ocMkdir, renameSync as __ocRename, rmSync as __ocRm, writeFileSync as __ocWrite } from "node:fs"
 import { tmpdir as __ocTmpdir } from "node:os"
 import __ocPath from "node:path"
-import { getAssetKeys as __ocAssetKeys, getRawAsset as __ocRawAsset, isSea as __ocIsSea } from "node:sea"
+import { getRawAsset as __ocRawAsset, isSea as __ocIsSea } from "node:sea"
 import { fileURLToPath as __ocFileURLToPath } from "node:url"
 const __filename = import.meta.filename
 const __dirname = import.meta.dirname
@@ -210,12 +210,12 @@ if (__ocIsSea()) {
   if (__ocUid !== undefined) __ocChmod(__ocCacheRoot, 0o700)
 }
 const __ocAssetRoot = __ocIsSea()
-  ? __ocPath.join(__ocCacheRoot, ${JSON.stringify(`${input.assetHash}-${input.target.platform}-${input.target.arch}`)})
+  ? process.env.OPENCODE_NODE_ASSETS_DIR ?? __ocPath.join(__ocCacheRoot, ${JSON.stringify(`${input.assetHash}-${input.target.platform}-${input.target.arch}`)})
   : __ocFileURLToPath(new URL("./assets/", import.meta.url))
 const __ocPersistentPty = ${JSON.stringify(opencodePtyAsset)}
 if (__ocIsSea()) {
   const __ocPtySpawnHelper = ${JSON.stringify(nodePtySpawnHelper)}
-  for (const __ocKey of __ocAssetKeys()) {
+  for (const __ocKey of ${JSON.stringify(input.assetKeys)}) {
     if (__ocKey === ${JSON.stringify(appArchiveAsset)}) continue
     const __ocTarget = __ocPath.join(__ocAssetRoot, __ocKey)
     if (__ocExists(__ocTarget)) continue
@@ -237,12 +237,8 @@ process.env.OTUI_ASSET_ROOT = __ocAssetRoot
 process.env.OPENCODE_NODE_PTY_PATH = __ocPath.join(__ocAssetRoot, ${JSON.stringify(input.target.nodePtyEntryAsset)})
 process.env.OPENCODE_PARCEL_WATCHER_PATH = __ocPath.join(__ocAssetRoot, ${JSON.stringify(input.target.parcelWatcherAsset)})
 process.env.OPENCODE_PHOTON_WASM_PATH = __ocPath.join(__ocAssetRoot, ${JSON.stringify(photonWasmAsset)})
-process.env.FFF_BINARY_PATH = __ocPath.join(__ocAssetRoot, ${JSON.stringify(input.target.fffAsset)})
-process.env.OPENCODE_FFF_FFI_PATH = __ocPath.join(__ocAssetRoot, ${JSON.stringify(input.target.fffFfiAsset)})
+process.env.OPENCODE_DISABLE_FFF = "1"
 if (__ocPersistentPty && !process.env.OPENCODE_PTY_BIN) process.env.OPENCODE_PTY_BIN = __ocPath.join(__ocAssetRoot, __ocPersistentPty)
-try {
-  globalThis.__OPENCODE_FFF_FFI = require(process.env.OPENCODE_FFF_FFI_PATH)
-} catch {}
 globalThis.__OPENCODE_PHOTON_WASM_PATH = process.env.OPENCODE_PHOTON_WASM_PATH
 if (process.platform === "linux") process.env.OPENTUI_LIBC = "glibc"`
 }
@@ -253,6 +249,7 @@ export type NodeBuildInput = {
   readonly highlights?: string
   readonly modelsSnapshot?: string
   readonly assetHash: string
+  readonly assetKeys: readonly string[]
   readonly target: NodeTarget
 }
 
@@ -287,7 +284,7 @@ export function mainConfig(input: NodeBuildInput): UserConfig {
     ssr: { noExternal: true },
     build: {
       ssr: "src/node/index.ts",
-      target: "node26",
+      target: "node22",
       outDir: "dist-node",
       emptyOutDir: false,
       minify: true,
@@ -302,5 +299,6 @@ export default mainConfig({
   version: process.env.OPENCODE_VERSION ?? "local",
   channel: process.env.OPENCODE_CHANNEL ?? "local",
   assetHash: "local",
+  assetKeys: [],
   target: nodeTarget(process.platform, process.arch),
 })
