@@ -50,15 +50,18 @@ const targets = requested
     ? [nodeTarget(process.platform, process.arch)]
     : allTargets
 
+if (targets.length === 0) throw new Error(`Unknown Node target: ${requested}`)
 process.chdir(dir)
-if (!skipInstall) run(process.execPath, ["install", "--os=*", "--cpu=*"])
+if (!skipInstall) {
+  const target = targets.length === 1 ? targets[0] : undefined
+  run(process.execPath, ["install", `--os=${target?.platform ?? "*"}`, `--cpu=${target?.arch ?? "*"}`])
+}
 if (appArchiveOnly) {
   if (!archivePath) throw new Error("--app-archive-only requires OPENCODE_APP_ARCHIVE")
   await mkdir(path.dirname(archivePath), { recursive: true })
   await writeFile(archivePath, await buildAppArchive(Script.channel, Script.version))
   process.exit(0)
 }
-if (targets.length === 0) throw new Error(`Unknown Node target: ${requested}`)
 const modelsSnapshot = await bundledModelsSnapshot()
 const appArchive = archivePath ? await Bun.file(archivePath).bytes() : await buildAppArchive(Script.channel, Script.version)
 if (!bundleOnly) await rm(outdir, { recursive: true, force: true })

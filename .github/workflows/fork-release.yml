@@ -1,0 +1,233 @@
+name: Fork Node CLI release
+
+on:
+  push:
+    tags:
+      - "legacy-v*"
+
+concurrency:
+  group: fork-node-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - name: Validate release tag and destination
+        id: plan
+        run: |
+          if [ "$GITHUB_REPOSITORY" != "bitsnaps/opencode" ]; then
+            echo "This workflow only publishes releases to bitsnaps/opencode." >&2
+            exit 1
+          fi
+          if [[ ! "$GITHUB_REF_NAME" =~ ^legacy-v([0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?)$ ]]; then
+            echo "Expected a legacy-v-prefixed semantic version tag." >&2
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+
+  build-app:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.4.4
+      - name: Build shared app archive
+        run: bun run build:node --app-archive-only --skip-install
+        working-directory: packages/cli
+        env:
+          OPENCODE_APP_ARCHIVE: ${{ github.workspace }}/.cache/node-release/opencode-app.archive
+          OPENCODE_CHANNEL: latest
+          OPENCODE_VERSION: ${{ needs.plan.outputs.version }}
+      - name: Fetch models catalog
+        run: bun packages/core/script/update-models-snapshot.ts .cache/node-release/models-catalog.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Upload shared build inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: node-release-inputs
+          path: |
+            .cache/node-release/opencode-app.archive
+            .cache/node-release/models-catalog.json
+          if-no-files-found: error
+          retention-days: 3
+
+  build-node:
+    needs: [plan, build-app]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-arm64, runner: ubuntu-24.04-arm }
+          - { target: linux-x64, runner: ubuntu-24.04 }
+          - { target: darwin-arm64, runner: macos-26 }
+          - { target: darwin-x64, runner: macos-26-intel }
+          - { target: windows-arm64, runner: windows-2025 }
+          - { target: windows-x64, runner: windows-2025 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.4.4
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.18.0"
+      - name: Download shared build inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: node-release-inputs
+          path: .cache/node-release
+      - name: Build Node CLI
+        run: bun run build:node --skip-install
+        if: matrix.target != 'windows-arm64'
+        working-directory: packages/cli
+        env:
+          OPENCODE_APP_ARCHIVE: ${{ github.workspace }}/.cache/node-release/opencode-app.archive
+          OPENCODE_CHANNEL: latest
+          OPENCODE_MODELS_SNAPSHOT: ${{ github.workspace }}/.cache/node-release/models-catalog.json
+          OPENCODE_TARGET: ${{ matrix.target }}
+          OPENCODE_VERSION: ${{ needs.plan.outputs.version }}
+      - name: Build Windows ARM64 Node CLI
+        if: matrix.target == 'windows-arm64'
+        run: bun run build:node
+        working-directory: packages/cli
+        env:
+          OPENCODE_APP_ARCHIVE: ${{ github.workspace }}/.cache/node-release/opencode-app.archive
+          OPENCODE_CHANNEL: latest
+          OPENCODE_MODELS_SNAPSHOT: ${{ github.workspace }}/.cache/node-release/models-catalog.json
+          OPENCODE_TARGET: ${{ matrix.target }}
+          OPENCODE_VERSION: ${{ needs.plan.outputs.version }}
+      - name: Verify macOS deployment target
+        if: startsWith(matrix.target, 'darwin')
+        working-directory: packages/cli
+        run: |
+          binary="dist/node/cli-node-$OPENCODE_TARGET/bin/opencode2-node"
+          minimum=$(vtool -show-build "$binary" | awk '$1 == "minos" { print $2 }')
+          test "$minimum" = "11.0"
+        env:
+          OPENCODE_TARGET: ${{ matrix.target }}
+      - name: Verify macOS native asset deployment targets
+        if: startsWith(matrix.target, 'darwin')
+        working-directory: packages/cli
+        run: |
+          while IFS= read -r -d '' asset; do
+            file -b "$asset" | grep -q 'Mach-O' || continue
+            minimums=$(vtool -show-build "$asset" | awk '$1 == "minos" { print $2 }')
+            if [ -z "$minimums" ]; then
+              minimums=$(otool -l "$asset" | awk '$1 == "cmd" { macos = $2 == "LC_VERSION_MIN_MACOSX" } macos && $1 == "version" { print $2; macos = 0 }')
+            fi
+            test -n "$minimums" || { echo "No macOS deployment target found: $asset"; exit 1; }
+            while IFS= read -r minimum; do
+              awk -v minimum="$minimum" 'BEGIN { split(minimum, version, "."); exit !(version[1] < 11 || (version[1] == 11 && version[2] == 0)) }' || {
+                echo "macOS deployment target exceeds 11.0: $asset ($minimum)"
+                exit 1
+              }
+            done <<< "$minimums"
+          done < <(find dist-node/assets -type f -print0)
+        env:
+          OPENCODE_TARGET: ${{ matrix.target }}
+      - name: Smoke test Node CLI
+        if: matrix.target != 'windows-arm64'
+        working-directory: packages/cli
+        run: bun run script/service-smoke.ts --node
+      - name: Stage release binary
+        run: |
+          target="${OPENCODE_TARGET}"
+          binary="opencode2-node"
+          if [[ "$target" == windows-* ]]; then binary="${binary}.exe"; fi
+          mkdir -p "release-binary/$target"
+          cp "packages/cli/dist/node/cli-node-$target/bin/$binary" "release-binary/$target/$binary"
+        env:
+          OPENCODE_TARGET: ${{ matrix.target }}
+      - name: Upload release binary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: node-cli-${{ matrix.target }}
+          path: release-binary/${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 3
+
+  test-ubuntu-2004:
+    needs: [plan, build-node]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download Linux x64 Node CLI
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: node-cli-linux-x64
+          path: node-cli
+      - name: Test on Ubuntu 20.04
+        run: |
+          chmod +x node-cli/opencode2-node
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/node-cli:/opencode:ro" \
+            ubuntu:20.04 /opencode/opencode2-node --help
+
+  publish:
+    needs: [plan, build-node, test-ubuntu-2004]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download release binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: node-cli-*
+          path: node-cli
+      - name: Package release assets
+        run: |
+          mkdir -p release-assets
+          for target in linux-arm64 linux-x64 darwin-arm64 darwin-x64 windows-arm64 windows-x64; do
+            binary="opencode2-node"
+            if [[ "$target" == windows-* ]]; then binary="${binary}.exe"; fi
+            source="node-cli/node-cli-$target/$binary"
+            test -s "$source" || { echo "Missing release binary: $source" >&2; exit 1; }
+            if [[ "$target" == linux-* ]]; then
+              chmod +x "$source"
+              tar --mtime=@0 --owner=0 --group=0 --numeric-owner \
+                -czf "release-assets/opencode2-node-$target.tar.gz" \
+                -C "$(dirname "$source")" "$binary"
+            else
+              (cd "$(dirname "$source")" && zip -X -q "$GITHUB_WORKSPACE/release-assets/opencode2-node-$target.zip" "$binary")
+            fi
+          done
+          (cd release-assets && sha256sum opencode2-node-* | sort -k2 > SHA256SUMS)
+      - name: Publish fork GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --repo bitsnaps/opencode \
+            --verify-tag \
+            --title "OpenCode Node CLI $RELEASE_VERSION (legacy fork)" \
+            --prerelease \
+            --notes "Built from the legacy branch in bitsnaps/opencode. This is the headless Node.js 22.18.0 CLI; the full-screen TUI and opencode mini are unavailable. Linux, macOS, and Windows artifacts are included. The macOS 11 deployment target is checked, but Big Sur execution is not verified. Ubuntu 20.04 is smoke-tested. Windows 10 execution is not verified."
