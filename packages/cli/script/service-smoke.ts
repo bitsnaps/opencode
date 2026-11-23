@@ -33,7 +33,7 @@ const env = {
 const processes: Array<ReturnType<typeof Bun.spawn>> = []
 const errors: Array<Promise<string>> = []
 let failure: unknown
-try {
+const run = async () => {
   await fs.mkdir(path.join(root, ".opencode", "plugins"), { recursive: true })
   spawnService()
   spawnService()
@@ -91,6 +91,17 @@ try {
   if (!(await exitsWithin(winner, 10_000))) throw new Error("Compiled service did not stop")
   for (let attempt = 0; attempt < 200 && (await Bun.file(registration).exists()); attempt++) await Bun.sleep(25)
   if (await Bun.file(registration).exists()) throw new Error("Compiled service registration was not removed")
+}
+const operation = run()
+const deadline = new Promise<never>((_, reject) => {
+  const timer = setTimeout(() => reject(new Error("Compiled service lifecycle smoke test exceeded 3 minutes")), 180_000)
+  operation.then(
+    () => clearTimeout(timer),
+    () => clearTimeout(timer),
+  )
+})
+try {
+  await Promise.race([operation, deadline])
 } catch (cause) {
   failure = cause
 } finally {
