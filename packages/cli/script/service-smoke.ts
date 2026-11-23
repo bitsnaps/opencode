@@ -79,7 +79,12 @@ try {
 
   const winner = processes.find((process) => process.pid === info.pid)
   const loser = processes.find((process) => process.pid !== info.pid)
-  if (!winner || !loser) throw new Error("Compiled contenders did not elect one registered owner")
+  if (!winner || !loser)
+    throw new Error(
+      `Compiled contenders did not elect one registered owner (registration PID ${info.pid}; processes ${processes
+        .map((process) => `${process.pid}:${process.exitCode ?? "running"}`)
+        .join(", ")})`,
+    )
   if (!(await exitsWithin(loser, 10_000))) throw new Error("Losing compiled contender did not exit")
 
   await Effect.runPromise(Service.stop({ file: registration }).pipe(Effect.provide(NodeFileSystem.layer)))
@@ -90,6 +95,10 @@ try {
   failure = cause
 } finally {
   processes.forEach((process) => process.kill())
+  const exited = await Promise.all(processes.map((process) => exitsWithin(process, 10_000)))
+  processes.forEach((process, index) => {
+    if (!exited[index]) process.kill("SIGKILL")
+  })
   await Promise.all(processes.map((process) => process.exited))
   if (failure)
     errors.push(fs.readFile(path.join(root, "data", "opencode", "log", "opencode.log"), "utf8").catch(() => ""))
