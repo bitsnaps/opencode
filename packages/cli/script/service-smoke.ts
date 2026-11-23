@@ -77,8 +77,8 @@ const run = async () => {
   })
   if (stopRoute.status !== 404) throw new Error("Compiled service exposed the removed HTTP stop route")
 
-  const winner = processes.find((process) => process.pid === info.pid)
-  const loser = processes.find((process) => process.pid !== info.pid)
+  const winner = processes.find((process) => process.exitCode === null)
+  const loser = processes.find((process) => process.exitCode !== null)
   if (!winner || !loser)
     throw new Error(
       `Compiled contenders did not elect one registered owner (registration PID ${info.pid}; processes ${processes
