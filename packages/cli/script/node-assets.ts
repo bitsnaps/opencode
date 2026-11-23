@@ -39,7 +39,7 @@ export async function collectNodeAssets(target: NodeTarget) {
     ...(await collectFiles(ptyRoot))
       .filter((relative) => !relative.endsWith(".map") && !relative.endsWith(".pdb"))
       .map((relative) => ({
-        key: `${target.nodePtyPackage}/${relative}`,
+        key: normalizeAssetKey(`${target.nodePtyPackage}/${relative}`),
         source: path.join(ptyRoot, relative),
       })),
   ]
@@ -73,4 +73,8 @@ export async function seaAssetMap() {
   return Object.fromEntries(
     (await collectFiles(root)).map((key) => [key.replaceAll(path.sep, "/"), path.join(root, key)]),
   )
+}
+
+export function normalizeAssetKey(key: string) {
+  return key.replaceAll("\\", "/")
 }
