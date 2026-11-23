@@ -31,7 +31,6 @@ const env = {
   XDG_STATE_HOME: path.join(root, "state"),
 }
 const processes: Array<ReturnType<typeof Bun.spawn>> = []
-const errors: Array<Promise<string>> = []
 let failure: unknown
 const run = async () => {
   await fs.mkdir(path.join(root, ".opencode", "plugins"), { recursive: true })
@@ -110,26 +109,28 @@ try {
   processes.forEach((process, index) => {
     if (!exited[index]) process.kill("SIGKILL")
   })
-  await Promise.all(processes.map((process) => process.exited))
-  if (failure)
-    errors.push(fs.readFile(path.join(root, "data", "opencode", "log", "opencode.log"), "utf8").catch(() => ""))
+  const stopped = await Promise.all(
+    processes.map((process, index) => (exited[index] ? true : exitsWithin(process, 5_000))),
+  )
+  if (stopped.some((value) => !value)) failure ??= new Error("Compiled service did not exit after forceful termination")
 }
 
-const output = await Promise.all(errors)
+const output = failure
+  ? await fs.readFile(path.join(root, "data", "opencode", "log", "opencode.log"), "utf8").catch(() => "")
+  : ""
 // Windows can retain directory handles briefly after the service processes exit.
 await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch((cause: unknown) => {
   console.error("Failed to remove service smoke-test directory", cause)
   failure ??= cause
 })
 if (failure)
-  throw new Error(output.filter(Boolean).join("\n") || "Compiled service lifecycle smoke test failed", {
+  throw new Error(output || "Compiled service lifecycle smoke test failed", {
     cause: failure,
   })
 
 function spawnService() {
-  const process = Bun.spawn([binary, "serve", "--service"], { env, stdout: "ignore", stderr: "pipe" })
+  const process = Bun.spawn([binary, "serve", "--service"], { env, stdout: "ignore", stderr: "ignore" })
   processes.push(process)
-  errors.push(new Response(process.stderr).text())
   return process
 }
 

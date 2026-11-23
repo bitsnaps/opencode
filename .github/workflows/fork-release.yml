@@ -155,6 +155,7 @@ jobs:
           OPENCODE_TARGET: ${{ matrix.target }}
       - name: Smoke test Node CLI
         if: matrix.target != 'windows-arm64'
+        timeout-minutes: 5
         working-directory: packages/cli
         run: bun run script/service-smoke.ts --node
       - name: Stage release binary
