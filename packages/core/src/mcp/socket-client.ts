@@ -61,7 +61,7 @@ export function make(socket: Socket): SocketTransport {
     send: (message: JSONRPCMessage) =>
       phase !== "open"
         ? Promise.reject(new Error("Not connected"))
-        : Promise.try(() => {
+        : Promise.resolve().then(() => {
             socket.send(JSON.stringify(message))
           }),
     close: () => {

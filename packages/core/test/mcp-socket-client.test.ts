@@ -156,6 +156,18 @@ describe("McpSocketClient", () => {
     expect(await transport.send(ping)).toBeUndefined()
   })
 
+  test("rejects when sending throws", async () => {
+    const transport = McpSocketClient.make({
+      send: () => {
+        throw new Error("send failed")
+      },
+      close: () => {},
+    })
+    observe(transport)
+    await transport.start()
+    await expect(transport.send(ping)).rejects.toThrow("send failed")
+  })
+
   test("rejects a second start", async () => {
     const transport = McpSocketClient.make(fakeSocket())
     observe(transport)
