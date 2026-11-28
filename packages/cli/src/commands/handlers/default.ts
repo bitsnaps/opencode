@@ -13,10 +13,37 @@ import { Service } from "@opencode/client/effect/service"
 import { OpenCode } from "@opencode/client/promise"
 import { findSession } from "../../session-target"
 import { errorMessage } from "../../util/error"
-import { tuiUnavailable } from "../../node/compat"
+import { interactiveTerminalUnavailable } from "../../node/compat"
 
 export default Runtime.handler(Commands, (input) => {
-  if (OPENCODE_ARTIFACT === "cli-node") return Effect.fail(new Error(tuiUnavailable()))
+  if (OPENCODE_ARTIFACT === "cli-node") {
+    if (!process.stdin.isTTY || !process.stdout.isTTY)
+      return Effect.fail(new Error(interactiveTerminalUnavailable))
+    return Effect.gen(function* () {
+      const { runInteractive } = yield* Effect.promise(() => import("../../run/interactive"))
+      const requestedDirectory = Option.getOrUndefined(input.directory)
+      const requestedServer = Option.getOrUndefined(input.server)
+      if (requestedDirectory !== undefined) process.chdir(requestedDirectory)
+      const server = yield* ServerConnection.resolve({
+        server: requestedServer,
+        standalone: input.standalone,
+        mismatch: "replace",
+        onStart: (reason) =>
+          process.stderr.write(reason === "missing" ? "Starting background server...\n" : "Restarting background server...\n"),
+      })
+      yield* Effect.promise(() =>
+        runInteractive({
+          endpoint: server.endpoint,
+          local: requestedServer === undefined,
+          directory: process.cwd(),
+          continue: input.continue,
+          session: Option.getOrUndefined(input.session),
+          prompt: Option.getOrUndefined(input.prompt),
+          auto: input.auto || input.yolo || input.dangerouslySkipPermissions,
+        }),
+      )
+    })
+  }
   return Effect.gen(function* () {
     const [{ run }, { UpdatePreflight }] = yield* Effect.promise(() =>
       Promise.all([import("@opencode/tui"), import("../../services/update-preflight")]),

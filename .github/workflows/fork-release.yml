@@ -231,4 +231,4 @@ jobs:
             --verify-tag \
             --title "OpenCode Node CLI $RELEASE_VERSION (legacy fork)" \
             --prerelease \
-            --notes "Built from the legacy branch in bitsnaps/opencode. This is the headless Node.js 22.18.0 CLI; the full-screen TUI and opencode mini are unavailable. Linux, macOS, and Windows artifacts are included. The macOS 11 deployment target is checked, but Big Sur execution is not verified. Ubuntu 20.04 is smoke-tested. Windows 10 execution is not verified."
+            --notes "Built from the legacy branch in bitsnaps/opencode. This Node.js 22.18.0 CLI provides a line-oriented interactive session when run in a terminal; the full-screen TUI and opencode mini are unavailable. Linux, macOS, and Windows artifacts are included. The macOS 11 deployment target is checked, but Big Sur execution is not verified. Ubuntu 20.04 is smoke-tested. Windows 10 execution is not verified."
